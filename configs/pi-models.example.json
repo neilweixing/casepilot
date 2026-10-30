@@ -1,0 +1,19 @@
+{
+  "providers": {
+    "casepilot": {
+      "baseUrl": "https://model-gateway.example.invalid/v1",
+      "api": "openai-completions",
+      "apiKey": "${CASEPILOT_API_KEY}",
+      "models": [
+        {
+          "id": "replace-with-your-model-id",
+          "name": "CasePilot configured model",
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      ]
+    }
+  }
+}

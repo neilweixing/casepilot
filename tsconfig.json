@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "types": ["node"]
+  },
+  "include": ["apps/server/src/**/*.ts", "packages/contracts/src/**/*.ts"]
+}

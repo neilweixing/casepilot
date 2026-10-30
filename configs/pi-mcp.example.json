@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.83",
+        "--isolated",
+        "--caps",
+        "vision"
+      ],
+      "enabled": false,
+      "exposure": "direct",
+      "description": "在本机可见的独立浏览器中执行已确认的 Web 测试任务"
+    }
+  }
+}

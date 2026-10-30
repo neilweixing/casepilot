@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "example-case-001",
+  "externalId": "TC-001",
+  "module": "中心启动周汇报",
+  "title": "SSU 工作所处阶段字段位于预计启动日期之后",
+  "priority": "P0",
+  "preconditions": [],
+  "steps": [
+    {
+      "id": "s1",
+      "description": "进入中心启动周汇报任务的填写页面。"
+    },
+    {
+      "id": "s2",
+      "description": "查看 SSU 工作所处阶段与预计启动日期的位置关系。"
+    }
+  ],
+  "expectations": [
+    {
+      "id": "e1",
+      "description": "填写页面正常展示。",
+      "relatedStepIds": [
+        "s1"
+      ]
+    },
+    {
+      "id": "e2",
+      "description": "SSU 工作所处阶段位于预计启动日期之后。",
+      "relatedStepIds": [
+        "s2"
+      ]
+    }
+  ],
+  "source": {
+    "kind": "manual-example-from-screenshot",
+    "fileName": null,
+    "sheetName": null,
+    "rowNumbers": [],
+    "confirmed": false
+  },
+  "notes": "仅解释规范化契约。原始截图标注移动端，但 P0 仅桌面 Web；没有原始 xlsx，不能伪造来源行号或解析结果。"
+}

@@ -1,0 +1,34 @@
+{
+  "name": "casepilot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=22.19.0",
+    "pnpm": ">=12.15.0"
+  },
+  "scripts": {
+    "check:docs": "node scripts/check-docs.mjs",
+    "check": "node scripts/check-docs.mjs",
+    "dev": "node --env-file-if-exists=.env scripts/dev.mjs",
+    "start": "node --env-file-if-exists=.env apps/server/src/main.ts",
+    "smoke": "node --env-file-if-exists=.env apps/server/src/smoke-cli.ts",
+    "mcp:check": "node apps/server/src/mcp-check.ts",
+    "m3:check": "node --env-file-if-exists=.env scripts/m3-check.mjs",
+    "m4:check": "node --env-file-if-exists=.env scripts/m4-check.mjs",
+    "reports:check": "node --env-file-if-exists=.env scripts/check-reports.mjs",
+    "recovery:check": "node --env-file-if-exists=.env apps/server/src/recovery-cli.ts",
+    "lifecycle:check": "node --env-file-if-exists=.env apps/server/src/lifecycle-cli.ts",
+    "captcha:check": "node --env-file-if-exists=.env apps/server/src/captcha-cli.ts",
+    "delete:check": "node scripts/delete-check.mjs",
+    "stop:check": "node --env-file-if-exists=.env scripts/check-stop.mjs",
+    "typecheck": "tsc --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
+    "test": "node scripts/test.mjs",
+    "build": "pnpm --filter @casepilot/web build"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

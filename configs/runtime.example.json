@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4310
+  },
+  "storage": {
+    "dataDir": "./data"
+  },
+  "model": {
+    "baseURL": "https://model-gateway.example.invalid/v1",
+    "modelId": "replace-with-your-model-id",
+    "apiKeyEnv": "CASEPILOT_API_KEY",
+    "api": "openai-completions"
+  },
+  "execution": {
+    "maxConcurrentRuns": 1,
+    "caseOrder": "import-order",
+    "wholeCaseRetries": 0,
+    "stepRecoveryAttempts": 2,
+    "stepRecoveryTimeoutMs": 120000,
+    "captchaAttempts": 3,
+    "caseTimeoutMs": 300000,
+    "runTimeoutMs": 1800000
+  },
+  "agent": {
+    "agentDir": "./data/agent",
+    "skillPaths": [
+      "./data/agent/skills"
+    ]
+  },
+  "reports": {
+    "html": "self-contained",
+    "includeSecrets": false
+  }
+}

@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# M1 使用 OpenAI-compatible 协议，不执行其他模型适配器的安装脚本。
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

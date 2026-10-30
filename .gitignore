@@ -1,0 +1,15 @@
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+configs/*.local.json
+.pi/
+data/
+artifacts/
+test-results/
+playwright-report/
+.DS_Store
+*.log
