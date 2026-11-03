@@ -1,12 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import type { Environment, ImportDraft, Run, SheetMapping, System, TestCase } from '../../../packages/contracts/src/p0.ts';
+import type { Environment, ImportDraft, Recording, Run, SheetMapping, System, TestCase } from '../../../packages/contracts/src/p0.ts';
 import { metrics } from '../../../packages/contracts/src/p0.ts';
 import { Store } from './storage.ts';
-import { confirmImport, createImport, importProblems, reparseImport, reviseImport } from './imports.ts';
+import { confirmImport, createImport, importProblems, normalizeDraft, reparseImport, reviseImport } from './imports.ts';
 import { publicEnvironment, saveEnvironment } from './environments.ts';
-import { deleteEnvironment, deleteImport, deleteRun, deleteSystem } from './deletion.ts';
+import { deleteEnvironment, deleteImport, deleteRecording, deleteRun, deleteSystem } from './deletion.ts';
 import { RunManager } from './runs.ts';
+import { RecorderManager } from './recorder.ts';
+import { recordingToTestCase } from './recording-parser.ts';
+import { createDraftFromRecording } from './imports.ts';
 import { htmlReport, readRunEvidence } from './reports.ts';
 import { loadModelConfig, redact, type RuntimeConfig } from './config.ts';
 import { activateProvider, listProviders, removeProvider, resolveModelConfig, saveProvider } from './model-providers.ts';
@@ -15,6 +18,9 @@ import { publicRunData, scrubValue, secretRedactor } from './execution-rules.ts'
 
 export function registerApi(app: FastifyInstance, config: RuntimeConfig, store: Store) {
   const runner = new RunManager(store, config);
+  const recorder = new RecorderManager(store, config);
+  // 先收尾任务，让事件流收到终态并关闭，随后 HTTP 服务才能结束连接。
+  app.addHook('preClose', async () => { await Promise.all([runner.close(), recorder.close()]); });
   // 先收尾任务，让事件流收到终态并关闭，随后 HTTP 服务才能结束连接。
   app.addHook('preClose', async () => { await runner.close(); });
   app.addHook('onClose', async () => { store.close(); });
@@ -44,6 +50,37 @@ export function registerApi(app: FastifyInstance, config: RuntimeConfig, store: 
     return { model, platform: process.platform, browser: 'Chrome', maxConcurrentRuns: 1, caseTimeoutMs: config.timeoutMs, runnerAvailable: config.runnerEnabled };
   });
   app.get('/api/systems', async () => store.list<System>('system'));
+  // 录制脚本：codegen 子进程 + 浏览器互斥；转换产物走与 Excel 导入相同的确认门禁。
+  app.get('/api/recordings', async () => store.list<Recording>('recording'));
+  app.post<{ Body: { name?: string; startURL?: string } }>('/api/recordings', async request => {
+    const startURL = typeof request.body?.startURL === 'string' ? request.body.startURL.trim() : '';
+    if (startURL) {
+      try { const url = new URL(startURL); if (!['http:', 'https:'].includes(url.protocol)) throw new Error(); }
+      catch { throw new Error('起始地址必须是有效的 HTTP(S) 地址'); }
+    }
+    const name = typeof request.body?.name === 'string' ? request.body.name : '';
+    return recorder.start(name, startURL);
+  });
+  app.post<{ Params: { id: string } }>('/api/recordings/:id/abort', async request => recorder.abort(request.params.id));
+  app.get<{ Params: { id: string } }>('/api/recordings/:id/script', async request => {
+    const { recording, script } = recorder.script(request.params.id);
+    return { recordingId: recording.id, status: recording.status, script };
+  });
+  app.post<{ Params: { id: string } }>('/api/recordings/:id/convert', async request => {
+    let { recording, script } = recorder.script(request.params.id);
+    // 草稿可能已被用户删除：引用失效时清除并允许重新转换，不留死锁。
+    if (recording.caseDraftId) {
+      const exists = (() => { try { store.get('import', recording.caseDraftId!); return true; } catch { return false; } })();
+      if (exists) throw Object.assign(new Error('该录制已转换为用例集，请直接在用例库查看'), { statusCode: 409 });
+      const { caseDraftId: _stale, ...rest } = recording;
+      recording = rest;
+    }
+    if (recording.status !== 'COMPLETED') throw new Error('只有已完成的录制才能转换为用例');
+    const { cases, issues } = recordingToTestCase(recording.id, recording.name, script);
+    const { draft } = createDraftFromRecording(store, recording.id, recording.name, script, cases, issues);
+    return store.put('recording', { ...recording, caseDraftId: draft.id });
+  });
+  app.delete<{ Params: { id: string } }>('/api/recordings/:id', async request => deleteRecording(store, request.params.id));
   app.post<{ Body: { name: string } }>('/api/systems', async request => {
     if (typeof request.body?.name !== 'string' || !request.body.name.trim() || request.body.name.length > 200) throw new Error('请填写系统名称');
     return store.put('system', { id: randomUUID(), name: request.body.name.trim() });
@@ -51,16 +88,16 @@ export function registerApi(app: FastifyInstance, config: RuntimeConfig, store: 
   app.get('/api/environments', async () => store.list<Environment>('environment').map(publicEnvironment));
   app.post<{ Body: Record<string, unknown> }>('/api/environments', async request => publicEnvironment(saveEnvironment(store, request.body)));
   app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/environments/:id', async request => publicEnvironment(saveEnvironment(store, { ...request.body, id: request.params.id }, request.params.id)));
-  app.get('/api/imports', async () => store.list<ImportDraft>('import').map(d => ({ id: d.id, fileName: d.fileName, revision: d.revision, confirmedAt: d.confirmedAt, createdAt: d.createdAt, caseCount: d.cases.filter(c => !c.excluded).length })));
+  app.get('/api/imports', async () => store.list<ImportDraft>('import').map(d => ({ id: d.id, fileName: d.fileName, revision: d.revision, confirmedAt: d.confirmedAt, createdAt: d.createdAt, systemId: d.systemId || '', origin: d.origin === 'recording' ? 'recording' : 'excel', caseCount: d.cases.filter(c => !c.excluded).length })));
   app.post<{ Querystring: { name?: string } }>('/api/imports', async request => {
     if (!Buffer.isBuffer(request.body) || typeof request.query.name !== 'string') throw new Error('请选择 .xlsx 文件上传');
     return createImport(store, request.body, request.query.name);
   });
   app.get<{ Params: { id: string } }>('/api/imports/:id', async request => {
-    const draft = store.get<ImportDraft>('import', request.params.id);
+    const draft = normalizeDraft(store.get<ImportDraft>('import', request.params.id));
     return { ...draft, problems: importProblems(draft) };
   });
-  app.patch<{ Params: { id: string }; Body: { revision: number; cases: TestCase[] } }>('/api/imports/:id', async request => reviseImport(store, request.params.id, request.body.revision, request.body.cases));
+  app.patch<{ Params: { id: string }; Body: { revision: number; cases: TestCase[]; systemId?: string } }>('/api/imports/:id', async request => reviseImport(store, request.params.id, request.body.revision, request.body.cases, request.body.systemId));
   app.post<{ Params: { id: string }; Body: { revision: number; sheets: string[]; mappings: Record<string, SheetMapping> } }>('/api/imports/:id/reparse', async request => {
     const draft = store.get<ImportDraft>('import', request.params.id);
     if (draft.revision !== request.body.revision) throw Object.assign(new Error('草稿已变化，请刷新'), { statusCode: 409 });

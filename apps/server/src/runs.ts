@@ -86,11 +86,17 @@ export class RunManager {
   create(importId: string, revision: number, environmentId: string) {
     if (!this.active) this.recoverPrevious();
     if (this.active || this.recoveryBlocked || existsSync(path.join(this.config.dataDir, 'm1.lock'))) throw Object.assign(new Error('已有任务占用浏览器，或上次执行的浏览器尚未释放'), { statusCode: 409 });
+    // 录制浏览器与执行浏览器互斥：录制进行中不接受新任务。
+    if (existsSync(path.join(this.config.dataDir, 'recorder.lock'))) throw Object.assign(new Error('录制进行中占用浏览器，请先结束录制再创建任务'), { statusCode: 409 });
+    for (const recording of this.store.list<{ status: string }>('recording')) if (recording.status === 'RECORDING') throw Object.assign(new Error('录制进行中占用浏览器，请先结束录制再创建任务'), { statusCode: 409 });
     let version: ImportDraft;
     try { version = this.store.get('import-version', `${importId}:${revision}`); }
     catch { throw Object.assign(new Error('该用例版本尚未确认，不能执行'), { statusCode: 409 }); }
     if (!version.confirmedAt) throw new Error('用例尚未确认');
     const environment = this.store.get<Environment>('environment', environmentId);
+    // 旧快照没有 systemId 时保持可用；新快照要求环境与用例集属于同一系统，防止串环境执行。
+    const snapshotSystemId = version.systemId || '';
+    if (snapshotSystemId && environment.systemId !== snapshotSystemId) throw Object.assign(new Error('所选环境属于其他系统，请选择与用例集一致的环境'), { statusCode: 409 });
     const model = this.loadModel();
     const cases = version.cases.filter(c => !c.excluded);
     if (!cases.length) throw new Error('没有可执行用例');

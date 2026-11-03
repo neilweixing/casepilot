@@ -112,6 +112,11 @@ export function importProblems(draft: ImportDraft): ImportIssue[] {
   return issues;
 }
 
+// 旧记录没有 systemId/origin 字段；读取时归一化：未指定系统为空串，来源默认 excel。
+export function normalizeDraft<T extends { systemId?: string; origin?: string }>(draft: T): T & { systemId: string; origin: 'excel' | 'recording' } {
+  return { ...draft, systemId: draft.systemId || '', origin: draft.origin === 'recording' ? 'recording' : 'excel' };
+}
+
 export async function createImport(store: Store, bytes: Buffer, name: string) {
   if (!/\.xlsx$/i.test(name)) throw new Error('当前支持 .xlsx；旧版 .xls、加密文件和宏工作簿请转换后再导入');
   const fileName = path.basename(name).slice(0, 200), id = randomUUID();
@@ -119,36 +124,47 @@ export async function createImport(store: Store, bytes: Buffer, name: string) {
   const dir = path.join(store.dataDir, 'imports', id);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(path.join(dir, 'original.xlsx'), bytes, { mode: 0o600 });
-  return store.put<ImportDraft>('import', { id, fileName, revision: 1, confirmedAt: null, createdAt: new Date().toISOString(), ...parsed });
+  return store.put<ImportDraft>('import', { id, fileName, revision: 1, confirmedAt: null, createdAt: new Date().toISOString(), systemId: '', origin: 'excel', ...parsed });
 }
 
 export async function reparseImport(store: Store, id: string, selected: string[], mappings: Record<string, SheetMapping>) {
-  const draft = store.get<ImportDraft>('import', id);
+  const draft = normalizeDraft(store.get<ImportDraft>('import', id));
   if (!selected.length || selected.some(s => !draft.sheets.some(sheet => sheet.name === s))) throw new Error('请选择有效工作表');
   const parsed = await parseWorkbook(readFileSync(path.join(store.dataDir, 'imports', id, 'original.xlsx')), draft.fileName, selected, mappings);
   return store.put('import', { ...draft, ...parsed, revision: draft.revision + 1, confirmedAt: null });
 }
 
-export function reviseImport(store: Store, id: string, revision: number, edits: TestCase[]) {
-  const draft = store.get<ImportDraft>('import', id);
+export function reviseImport(store: Store, id: string, revision: number, edits: TestCase[], systemId?: string) {
+  const draft = normalizeDraft(store.get<ImportDraft>('import', id));
   if (draft.revision !== revision) throw Object.assign(new Error('草稿已更新，请刷新后修改'), { statusCode: 409 });
   if (!Array.isArray(edits) || edits.length > 1000 || new Set(edits.map(c => c.id)).size !== edits.length) throw new Error('用例列表无效或内部编号重复');
+  if (systemId !== undefined && systemId !== draft.systemId && systemId !== '' && !store.has('system', systemId)) throw new Error('所选系统不存在，请刷新后重试');
   const cases = edits.map(c => {
     const original = draft.cases.find(o => o.id === c.id);
     if (!original || typeof c.title !== 'string' || typeof c.externalId !== 'string' || !['preconditions', 'steps', 'expectations'].every(key => Array.isArray(c[key as keyof TestCase]) && (c[key as 'steps'] as unknown[]).every(s => typeof s === 'string' && s.length <= 10000))) throw new Error('修订用例格式无效');
     return { ...original, externalId: c.externalId, title: c.title, module: String(c.module || ''), priority: String(c.priority || ''), preconditions: c.preconditions, steps: c.steps, expectations: c.expectations, excluded: c.excluded === true, duplicateAcknowledged: c.duplicateAcknowledged === true, issuesResolved: c.issuesResolved === true };
   });
   if (cases.length !== draft.cases.length) throw new Error('请通过排除标记保留原始用例，不能静默删除');
-  return store.put('import', { ...draft, cases, revision: draft.revision + 1, confirmedAt: null });
+  const nextSystemId = systemId === undefined ? draft.systemId : systemId;
+  return store.put('import', { ...draft, cases, systemId: nextSystemId, revision: draft.revision + 1, confirmedAt: null });
 }
 
 export function confirmImport(store: Store, id: string, revision: number) {
-  const draft = store.get<ImportDraft>('import', id);
+  const draft = normalizeDraft(store.get<ImportDraft>('import', id));
   if (draft.revision !== revision) throw Object.assign(new Error('确认版本已变化，请刷新'), { statusCode: 409 });
   if (draft.confirmedAt) return draft;
+  if (!draft.systemId) throw new Error('请先指定用例集所属系统，再确认版本');
   const problems = importProblems(draft);
   if (problems.length) throw new Error(problems.map(p => p.message).join('；'));
   const confirmed = { ...draft, confirmedAt: new Date().toISOString() };
   store.put('import-version', { ...confirmed, id: `${id}:${revision}`, importId: id });
   return store.put('import', confirmed);
+}
+
+// 录制脚本转用例草稿：一条录制生成一个单用例 ImportDraft，随后走与 Excel 导入相同的修订与确认门禁。
+export function createDraftFromRecording(store: Store, recordingId: string, name: string, script: string, cases: TestCase[], issues: ImportIssue[]) {
+  const id = randomUUID();
+  const draft: ImportDraft = { id, fileName: `${name}.录制`, revision: 1, confirmedAt: null, createdAt: new Date().toISOString(), systemId: '', origin: 'recording', sheets: [], mappings: {}, cases, issues };
+  store.put('import', draft);
+  return { draft, recordingId };
 }

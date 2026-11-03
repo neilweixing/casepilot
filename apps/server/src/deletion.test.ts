@@ -22,7 +22,7 @@ function run(store: Store, id: string, environmentId: string, importId: string, 
   return store.put('run', { id, importId, revision: 1, environment: { id: environmentId, name: '环境', baseURL: 'http://127.0.0.1:4310/demo', systemId: 'sys' }, modelId: 'synthetic', status, cases: [testCase], results: [], events: [], reason: '', createdAt: '', endedAt: null });
 }
 function importDraft(store: Store, id: string): ImportDraft {
-  const draft: ImportDraft = { id, fileName: 'synthetic.xlsx', revision: 1, confirmedAt: '', createdAt: '', sheets: [], mappings: {}, cases: [testCase], issues: [] };
+  const draft: ImportDraft = { id, fileName: 'synthetic.xlsx', revision: 1, confirmedAt: '', createdAt: '', systemId: '', origin: 'excel', sheets: [], mappings: {}, cases: [testCase], issues: [] };
   store.put('import', draft);
   store.put('import-version', { ...draft, id: `${id}:1`, importId: id });
   mkdirSync(path.join(store.dataDir, 'imports', id), { recursive: true });

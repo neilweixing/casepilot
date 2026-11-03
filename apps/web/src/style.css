@@ -85,6 +85,26 @@ label>.select-trigger{margin-top:8px}.select-trigger:hover{border-color:#bbb6ac;
 .system-strip li:first-child{border-top:0;padding-top:4px}
 .system-strip li>span{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
 
+/* 用例库来源切换：分段控件（与任务详情 pane-switch 同语言），选中项白底浮起。 */
+.imports-tab-switch{display:inline-flex;gap:4px;padding:3px;background:#f4f3f0;border-radius:8px;margin-bottom:22px}
+.imports-tab-switch button{padding:7px 16px;border-radius:6px;font-size:12px;color:#8b8377}
+.imports-tab-switch button[aria-selected=true]{background:#fff;color:#353530;box-shadow:0 1px 3px #3535300a;font-weight:500}
+
+/* 用例库按系统分组：组头轻量一行；来源与系统两个筛选器并排靠右。 */
+.case-group-filter{display:flex;justify-content:flex-end;gap:10px;margin-bottom:16px}
+.case-group-filter .select-trigger{width:auto;min-width:150px;min-height:36px;padding:6px 10px;font-size:12px}
+.case-group{margin-bottom:26px}
+.case-group-heading{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.case-group-heading h2{font-size:14px;font-weight:550;color:#4a463e}
+.case-group:last-child{margin-bottom:0}
+
+/* 用例集归属：确认门禁的说明跟随选择器，一句话讲清规则。 */
+.case-system{display:flex;align-items:flex-start;gap:24px}
+.case-system label{min-width:220px}
+.case-system label>input{margin-top:8px}
+.case-system .caption{align-self:center;line-height:1.8}
+@media(max-width:780px){.case-system{flex-direction:column;gap:12px}.case-system .caption{align-self:flex-start}}
+
 /* 设置页：左侧分类、右侧配置。只呈现真实可配置的项，不铺空分类。 */
 .settings-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;align-items:start}
 .settings-nav{display:grid;gap:2px;position:sticky;top:20px}
@@ -142,6 +162,28 @@ label>.select-trigger{margin-top:8px}.select-trigger:hover{border-color:#bbb6ac;
 
 
 
+
+/* 用例库内嵌录制区块：默认收起，录制中或有记录时展开；表单一行三段。 */
+.recorder-section>summary{font-size:13px;cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:14px}
+.recorder-section>summary::-webkit-details-marker{display:none}
+.recorder-section>summary::before{content:'▸';color:#b3a999;transition:transform .15s}
+.recorder-section[open]>summary::before{transform:rotate(90deg)}
+.recorder-section>summary>span{font-size:11px;color:#aaa194}
+.recorder-section{padding:16px 22px}
+.recorder-section .recorder-active,.recorder-section .recorder-start{margin-top:16px}
+.recorder-start{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.recorder-start label{min-width:200px;flex:1;max-width:320px}
+.recorder-start button{flex-shrink:0}
+.recorder-active{display:flex;align-items:center;gap:18px;border-color:#e3c9b7;background:#fdf7f3;border-radius:9px;padding:16px 18px}
+.recorder-active h2{font-size:14px}
+.recorder-active p{font-size:12px;color:#9a8d80;margin-top:8px;line-height:1.8}
+.recorder-active .row-actions{margin-left:auto;flex-shrink:0}
+.recorder-pulse{width:10px;height:10px;border-radius:50%;background:var(--accent-strong);flex-shrink:0;animation:recorder-pulse 1.6s ease-in-out infinite}
+@keyframes recorder-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media(prefers-reduced-motion:reduce){.recorder-pulse{animation:none}}
+.recorder-script{margin-top:16px}
+.recorder-script pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:#6b665d;background:#faf9f6;border:1px solid #efede8;border-radius:8px;padding:16px;max-height:420px;overflow:auto}
+.recorder-empty{font-size:12px;color:#a8a197;margin-top:14px}
 
 /* 侧栏模型状态：一行三段（状态点 / 模型名 / 思考深度）。模型名过长省略，悬停看全称。 */
 .model-status{border-top:1px solid var(--line);padding:12px 6px 4px}

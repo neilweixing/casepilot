@@ -10,8 +10,11 @@ export interface TestCase {
 }
 export interface ImportIssue { caseId?: string; sheet: string; row?: number; message: string; blocking: boolean }
 export interface SheetMapping { headerRow: number; columns: Partial<Record<Field, number>> }
+// 用例集来源：excel = 工作簿导入；recording = 录制脚本转换。旧记录无此字段，读取时归一化为 excel。
+export type ImportOrigin = 'excel' | 'recording';
 export interface ImportDraft {
   id: string; fileName: string; revision: number; confirmedAt: string | null; createdAt: string;
+  systemId: string; origin: ImportOrigin;
   sheets: { name: string; rows: number; selected: boolean; preview: string[][] }[];
   mappings: Record<string, SheetMapping>; cases: TestCase[]; issues: ImportIssue[];
 }
@@ -21,6 +24,12 @@ export interface Environment {
   captchaCode: string; createdAt: string;
 }
 export interface System { id: string; name: string }
+// 录制脚本：codegen 子进程产物。INTERRUPTED 表示录制未正常结束；脚本可能仍落盘，不伪造成功。
+export type RecordingStatus = 'RECORDING' | 'COMPLETED' | 'INTERRUPTED' | 'ERROR';
+export interface Recording {
+  id: string; name: string; status: RecordingStatus; startURL: string;
+  scriptAvailable: boolean; createdAt: string; endedAt: string | null; caseDraftId?: string;
+}
 // 思考档位与 Pi 的 ThinkingLevel 一致，运行时会原样传给会话。
 export const thinkingLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ThinkingLevel = typeof thinkingLevels[number];

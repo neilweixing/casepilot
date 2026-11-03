@@ -17,7 +17,7 @@ export function browserTransport(outputDir: string, origin: string | string[], i
   return new StdioTransport({
     command: process.execPath,
     args: [path.join(path.dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js'),
-      '--browser', 'chrome', '--isolated', '--no-webmcp', '--block-service-workers',
+      '--browser', 'chrome', '--isolated', '--no-webmcp', '--block-service-workers', '--ignore-https-errors',
       '--image-responses', 'allow', '--viewport-size', '1280x900', '--codegen', 'none', '--snapshot-mode', snapshotMode,
       '--allowed-origins', Array.isArray(origin) ? origin.join(';') : origin, '--output-dir', outputDir,
       '--timeout-action', '5000', '--timeout-navigation', '10000', '--idle-timeout', String(idleTimeoutMs)],
@@ -29,7 +29,9 @@ export function processExists(pid: number | undefined) {
   if (pid === undefined) return false;
   try { process.kill(pid, 0); return true; }
   catch (error) {
+    // ESRCH = 进程不存在；EPERM = 信号被拒但进程存在（如系统进程），按存活处理更安全。
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
     throw error;
   }
 }

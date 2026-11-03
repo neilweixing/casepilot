@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { metrics, type Environment, type ImportDraft, type Run, type System } from '../../../packages/contracts/src/p0.ts';
 import { Store } from './storage.ts';
 import { confirmImport, createImport, importProblems, parseWorkbook, reviseImport } from './imports.ts';
@@ -10,6 +11,8 @@ import { fixtureWorkbook } from './import-fixtures.ts';
 import { loadConfig } from './config.ts';
 import { createServer } from './server.ts';
 import { saveEnvironment, publicEnvironment } from './environments.ts';
+import { deleteImport, deleteSystem } from './deletion.ts';
+import { executeCase } from './case-agent.ts';
 import { htmlReport } from './reports.ts';
 import { RunManager } from './runs.ts';
 import { parseProcessTable } from './mcp.ts';
@@ -36,7 +39,11 @@ test('重复编号、空字段、无缓存公式阻止确认；修订保留原�
     const problems = importProblems(draft); assert.ok(problems.some(p => p.message.includes('重复'))); assert.ok(problems.some(p => p.message.includes('公式')));
     assert.throws(() => confirmImport(t.store, draft.id, draft.revision));
     const fixed = reviseImport(t.store, draft.id, draft.revision, draft.cases.map((c, i) => ({ ...c, excluded: i > 0, duplicateAcknowledged: true })));
-    const confirmed = confirmImport(t.store, draft.id, fixed.revision); assert.ok(confirmed.confirmedAt);
+    // 确认前必须指定用例集所属系统。
+    t.store.put<System>('system', { id: 'system', name: '测试系统' });
+    assert.throws(() => confirmImport(t.store, draft.id, fixed.revision), /所属系统/);
+    const owned = reviseImport(t.store, draft.id, fixed.revision, fixed.cases, 'system');
+    const confirmed = confirmImport(t.store, draft.id, owned.revision); assert.ok(confirmed.confirmedAt);
     const changed = reviseImport(t.store, draft.id, confirmed.revision, confirmed.cases.map(c => ({ ...c, title: c.title + '修订' })));
     assert.equal(changed.confirmedAt, null); assert.equal(changed.revision, confirmed.revision + 1);
     const old = t.store.get<ImportDraft>('import-version', `${draft.id}:${confirmed.revision}`);
@@ -60,8 +67,10 @@ test('排除再恢复或修改无关字段不能抹掉公式问题，须明确�
     assert.ok(importProblems(edited).some(i => i.caseId === formula.id && i.message.includes('公式')));
     const resolved = reviseImport(t.store, draft.id, edited.revision, edited.cases.map(c => ({ ...c, issuesResolved: c.id === formula.id })));
     assert.equal(importProblems(resolved).length, 0);
-    const confirmed = confirmImport(t.store, draft.id, resolved.revision);
-    assert.equal(confirmImport(t.store, draft.id, resolved.revision).confirmedAt, confirmed.confirmedAt);
+    t.store.put<System>('system', { id: 'system', name: '测试系统' });
+    const owned = reviseImport(t.store, draft.id, resolved.revision, resolved.cases, 'system');
+    const confirmed = confirmImport(t.store, draft.id, owned.revision);
+    assert.equal(confirmImport(t.store, draft.id, owned.revision).confirmedAt, confirmed.confirmedAt);
   } finally { t.cleanup(); }
 });
 
@@ -133,19 +142,78 @@ test('真实 API 保持导入门禁，修订冲突返回 409，未验收执行�
     const unconfirmed = await app.inject({ method: 'POST', url: '/api/runs', headers, payload: { importId: draft.id, revision: 1, environmentId: 'none' } });
     assert.equal(unconfirmed.statusCode, 409); assert.ok(unconfirmed.json().error.includes('尚未确认'));
     config.runnerEnabled = false;
-    const confirmed = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/confirm`, headers, payload: { revision: 1 } });
+    // 确认门禁：先指定所属系统，无效归属被拒绝。
+    const early = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/confirm`, headers, payload: { revision: 1 } });
+    assert.equal(early.statusCode, 400); assert.ok(early.json().error.includes('所属系统'));
+    const system = await app.inject({ method: 'POST', url: '/api/systems', headers, payload: { name: '测试系统' } });
+    assert.equal(system.statusCode, 200); const systemId = system.json().id;
+    const invalid = await app.inject({ method: 'PATCH', url: `/api/imports/${draft.id}`, headers, payload: { revision: 1, cases: draft.cases, systemId: 'missing' } });
+    assert.equal(invalid.statusCode, 400); assert.ok(invalid.json().error.includes('系统不存在'));
+    const owned = await app.inject({ method: 'PATCH', url: `/api/imports/${draft.id}`, headers, payload: { revision: 1, cases: draft.cases, systemId } });
+    assert.equal(owned.statusCode, 200); assert.equal(owned.json().systemId, systemId); assert.equal(owned.json().revision, 2); assert.equal(owned.json().confirmedAt, null);
+    const confirmed = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/confirm`, headers, payload: { revision: 2 } });
     assert.equal(confirmed.statusCode, 200); assert.ok(confirmed.json().confirmedAt);
     const conflict = await app.inject({ method: 'PATCH', url: `/api/imports/${draft.id}`, headers, payload: { revision: 0, cases: draft.cases } });
     assert.equal(conflict.statusCode, 409);
-    const split = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/split`, headers, payload: { revision: 1, caseId: draft.cases[0]!.id, stepIndex: 1, expectationIndex: 1 } });
-    assert.equal(split.statusCode, 200); assert.equal(split.json().cases.length, 2); assert.equal(split.json().confirmedAt, null);
-    const merged = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/merge`, headers, payload: { revision: 2, caseIds: split.json().cases.map((c: { id: string }) => c.id) } });
-    assert.equal(merged.statusCode, 200); assert.equal(merged.json().cases.length, 1);
-    const reparsed = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/reparse`, headers, payload: { revision: 3, sheets: ['表单用例'], mappings: draft.mappings } });
-    assert.equal(reparsed.statusCode, 200); assert.equal(reparsed.json().revision, 4); assert.equal(reparsed.json().confirmedAt, null);
+    const split = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/split`, headers, payload: { revision: 2, caseId: draft.cases[0]!.id, stepIndex: 1, expectationIndex: 1 } });
+    assert.equal(split.statusCode, 200); assert.equal(split.json().cases.length, 2); assert.equal(split.json().confirmedAt, null); assert.equal(split.json().systemId, systemId);
+    const merged = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/merge`, headers, payload: { revision: 3, caseIds: split.json().cases.map((c: { id: string }) => c.id) } });
+    assert.equal(merged.statusCode, 200); assert.equal(merged.json().cases.length, 1); assert.equal(merged.json().systemId, systemId);
+    const reparsed = await app.inject({ method: 'POST', url: `/api/imports/${draft.id}/reparse`, headers, payload: { revision: 4, sheets: ['表单用例'], mappings: draft.mappings } });
+    assert.equal(reparsed.statusCode, 200); assert.equal(reparsed.json().revision, 5); assert.equal(reparsed.json().confirmedAt, null); assert.equal(reparsed.json().systemId, systemId);
     assert.equal(reparsed.json().cases[0].steps.length, 3);
     assert.equal((await app.inject({ url: '/assets/../../.env', headers })).statusCode, 404);
   } finally { await app.close(); t.cleanup(); }
+});
+
+test('用例集归属系统：确认门禁、执行环境一致性与删除引用保护', async () => {
+  const t = temporary();
+  const until = async (check: () => boolean) => { for (let i = 0; i < 200; i++) { if (check()) return; await delay(10); } throw new Error('状态转换超时'); };
+  try {
+    const store = t.store;
+    store.put<System>('system', { id: 'sys-a', name: '系统 A' });
+    store.put<System>('system', { id: 'sys-b', name: '系统 B' });
+    store.put<System>('system', { id: 'sys-clean', name: '无环境系统' });
+    const draft = await createImport(store, await fixtureWorkbook(), 'sample.xlsx');
+    assert.throws(() => confirmImport(store, draft.id, draft.revision), /所属系统/);
+    assert.throws(() => reviseImport(store, draft.id, draft.revision, draft.cases, 'missing'), /系统不存在/);
+    const owned = reviseImport(store, draft.id, draft.revision, draft.cases, 'sys-a');
+    assert.equal(owned.systemId, 'sys-a'); assert.equal(owned.revision, draft.revision + 1); assert.equal(owned.confirmedAt, null);
+    const confirmed = confirmImport(store, draft.id, owned.revision);
+    assert.ok(confirmed.confirmedAt);
+    assert.equal(store.get<ImportDraft>('import-version', `${draft.id}:${owned.revision}`).systemId, 'sys-a');
+    // 无环境系统因持有用例集不能删除；删除用例集后才能删除。
+    const spare = await createImport(store, await fixtureWorkbook(), 'spare.xlsx');
+    const spareOwned = reviseImport(store, spare.id, spare.revision, spare.cases, 'sys-clean');
+    assert.throws(() => deleteSystem(store, 'sys-clean'), (error: Error & { statusCode?: number }) => error.statusCode === 409 && /还有 1 个用例集/.test(error.message));
+    deleteImport(store, spareOwned.id);
+    assert.equal(deleteSystem(store, 'sys-clean').deleted, 'system');
+    // 环境与用例集系统不一致时拒绝创建任务，不产生任何 run 记录。
+    const ref = store.password(JSON.stringify({ password: 'synthetic', captchaCode: '' }));
+    const envA = store.put<Environment>('environment', { id: 'env-a', systemId: 'sys-a', name: '环境 A', baseURL: 'http://127.0.0.1:4310/demo', loginURL: '', username: 'synthetic', credentialRef: ref, hasPassword: true, captchaCode: '', captchaStrategy: 'none', createdAt: '' });
+    store.put('environment', { ...envA, id: 'env-b', systemId: 'sys-b' });
+    const model = () => ({ apiKey: 'synthetic-not-used', baseURL: 'http://127.0.0.1', modelId: 'synthetic-not-used', contextWindow: 65536, maxTokens: 4096, input: ['text'] as ('text' | 'image')[], reasoning: false, thinkingLevel: 'off' as const });
+    // 合成执行器：落盘最小证据，让每条用例以 PASSED 结束，不触碰真实浏览器。
+    const executor: typeof executeCase = async (_config, _model, runId, c, _env, _cred, r) => {
+      r.steps[0]!.status = 'DONE'; r.steps[0]!.evidenceIds = ['step'];
+      r.evidence.push({ id: 'step', runId, caseId: c.id, stepId: 's1', kind: 'tool', path: 'step.json', timestamp: '', success: true }, { id: 'observation', runId, caseId: c.id, stepId: 'e1', kind: 'observation', path: 'obs.json', timestamp: '', success: true });
+      r.assertions.push({ expectationId: 'e1', expected: c.expectations[0]!, actual: '合成状态机输入，不代表真实页面', status: 'PASSED', evidenceIds: ['observation'] });
+      r.status = 'PASSED';
+    };
+    const manager = new RunManager(store, loadConfig({ CASEPILOT_DATA_DIR: t.directory }), { executeCase: executor, loadModel: model });
+    try {
+      assert.throws(() => manager.create(confirmed.id, owned.revision, 'env-b'), (error: Error & { statusCode?: number }) => error.statusCode === 409 && /其他系统/.test(error.message));
+      assert.equal(store.list<Run>('run').length, 0);
+      // 旧确认快照没有归属时保持可用，不被新校验卡死。
+      store.put('import-version', { id: 'legacy:1', confirmedAt: new Date().toISOString(), cases: [{ ...structuredClone(confirmed.cases[0]!), id: 'legacy-case' }] });
+      const legacy = manager.create('legacy', 1, 'env-b');
+      await until(() => ['COMPLETED', 'CANCELLED', 'INTERRUPTED', 'ERROR'].includes(store.get<Run>('run', legacy.id).status));
+      // 归属与环境一致时正常创建。
+      const run = manager.create(confirmed.id, owned.revision, 'env-a');
+      assert.equal(run.environment.systemId, 'sys-a');
+      await until(() => ['COMPLETED', 'CANCELLED', 'INTERRUPTED', 'ERROR'].includes(store.get<Run>('run', run.id).status));
+    } finally { await manager.close(); }
+  } finally { t.cleanup(); }
 });
 
 test('重启保留草稿并将遗留活动任务标为中断，不自动执行', async () => {

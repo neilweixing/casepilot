@@ -1,6 +1,6 @@
 import { realpathSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import type { Environment, ImportDraft, Run, System } from '../../../packages/contracts/src/p0.ts';
+import type { Environment, ImportDraft, Recording, Run, System } from '../../../packages/contracts/src/p0.ts';
 import { Store } from './storage.ts';
 
 interface PrivateRun { id: string; credentialRef: string; environment: Environment }
@@ -35,6 +35,8 @@ export function deleteSystem(store: Store, id: string) {
   const system = store.get<System>('system', id);
   const environments = store.list<Environment>('environment').filter(e => e.systemId === id);
   if (environments.length) throw refuse(`该系统下还有 ${environments.length} 个环境，请先删除这些环境`);
+  const imports = store.list<ImportDraft>('import').filter(d => (d.systemId || '') === id);
+  if (imports.length) throw refuse(`该系统下还有 ${imports.length} 个用例集，请先删除这些用例集`);
   store.remove('system', system.id);
   return { deleted: 'system' as const, id: system.id, name: system.name };
 }
@@ -59,6 +61,15 @@ export function deleteImport(store: Store, id: string) {
   const directory = path.join(store.dataDir, 'imports', draft.id);
   if (path.dirname(path.resolve(directory)) === path.resolve(store.dataDir, 'imports')) rmSync(directory, { recursive: true, force: true });
   return { deleted: 'import' as const, id: draft.id, fileName: draft.fileName, versionsRemoved: versions.length };
+}
+
+export function deleteRecording(store: Store, id: string) {
+  const recording = store.get<Recording>('recording', id);
+  if (recording.status === 'RECORDING') throw refuse('录制正在进行，请先放弃或等待录制结束');
+  store.remove('recording', recording.id);
+  const directory = path.join(store.dataDir, 'recordings', recording.id);
+  if (path.dirname(path.resolve(directory)) === path.resolve(store.dataDir, 'recordings')) rmSync(directory, { recursive: true, force: true });
+  return { deleted: 'recording' as const, id: recording.id, name: recording.name };
 }
 
 export function deleteRun(store: Store, id: string) {
